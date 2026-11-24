@@ -1,0 +1,72 @@
+name: Auto Unzip & Build Secure LankaBus APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Unzip project automatically
+        run: |
+          ZIPFILE=$(ls lanka_bus*.zip 2>/dev/null | head -n 1)
+          unzip -o "$ZIPFILE" -d app_src
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build & Securely Sign Release APK
+        working-directory: app_src
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > lankabus.keystore
+          npm install
+          npx cap add android
+          npx cap sync android
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"1.5.${{ github.run_number }}\"/" android/app/build.gradle
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          sed -i 's|<uses-permission android:name="android.permission.INTERNET" />|<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.VIBRATE" />|' "$MANIFEST"
+          for d in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            mkdir -p "android/app/src/main/res/$d"
+            cp www/icon-512.png "android/app/src/main/res/$d/ic_launcher.png" || true
+            cp www/icon-512.png "android/app/src/main/res/$d/ic_launcher_round.png" || true
+            cp www/icon-512.png "android/app/src/main/res/$d/ic_launcher_foreground.png" || true
+          done
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          "$BUILD_TOOLS/zipalign" -v -p 4 app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          "$BUILD_TOOLS/apksigner" sign --ks ../lankabus.keystore --ks-key-alias lankabus --ks-pass "pass:$KEYSTORE_PASS" --key-pass "pass:$KEYSTORE_PASS" --out ../../LankaBus.apk aligned.apk
+          "$BUILD_TOOLS/apksigner" verify ../../LankaBus.apk
+          rm -f ../lankabus.keystore
+          cd ../..
+          sha256sum LankaBus.apk > LankaBus.apk.sha256
+
+      - name: Publish Direct Downloadable APK to Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.5.${{ github.run_number }}
+          name: Lanka Bus v1.5.${{ github.run_number }}
+          files: |
+            LankaBus.apk
+            LankaBus.apk.sha256
