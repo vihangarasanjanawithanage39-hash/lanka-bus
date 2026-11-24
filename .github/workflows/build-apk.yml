@@ -15,18 +15,50 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Find & Unzip project automatically
+      - name: Find, Unzip & Auto-Prepare Capacitor
         run: |
-          ls -la
           ZIPFILE=$(find . -maxdepth 3 -iname "*.zip" | head -n 1)
           if [ -z "$ZIPFILE" ]; then
-            echo "ERROR: No .zip file found in repository!"
+            echo "ERROR: No .zip file found!"
             exit 1
           fi
           echo "Found ZIP: $ZIPFILE"
           mkdir -p app_src
           unzip -o "$ZIPFILE" -d app_src
-          ls -la app_src
+
+          if [ ! -d "app_src/www" ]; then
+            mkdir -p app_src/www
+            for f in index.html manifest.json sw.js icon-192.png icon-512.png data; do
+              [ -e "app_src/$f" ] && mv "app_src/$f" app_src/www/ || true
+            done
+          fi
+
+          if [ ! -f "app_src/package.json" ]; then
+            cat << 'EOF' > app_src/package.json
+          {
+            "name": "lanka-bus-app",
+            "version": "1.5.0",
+            "dependencies": {
+              "@capacitor/android": "^6.1.2",
+              "@capacitor/core": "^6.1.2"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^6.1.2"
+            }
+          }
+          EOF
+          fi
+
+          if [ ! -f "app_src/capacitor.config.json" ]; then
+            cat << 'EOF' > app_src/capacitor.config.json
+          {
+            "appId": "lk.lankabus.app",
+            "appName": "Lanka Bus",
+            "webDir": "www",
+            "server": { "androidScheme": "https", "cleartext": false }
+          }
+          EOF
+          fi
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -45,10 +77,6 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASS" ]; then
-            echo "ERROR: KEYSTORE_BASE64 or KEYSTORE_PASS secret is missing!"
-            exit 1
-          fi
           echo "$KEYSTORE_BASE64" | base64 -d > lankabus.keystore
           npm install
           npx cap add android
