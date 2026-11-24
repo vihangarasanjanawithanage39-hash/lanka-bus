@@ -26,15 +26,26 @@ jobs:
           mkdir -p app_src
           unzip -o "$ZIPFILE" -d app_src
 
-          if [ ! -d "app_src/www" ]; then
-            mkdir -p app_src/www
-            for f in index.html manifest.json sw.js icon-192.png icon-512.png data; do
-              [ -e "app_src/$f" ] && mv "app_src/$f" app_src/www/ || true
-            done
+          INDEX=$(find app_src -iname "index.html" | head -n 1)
+          if [ -z "$INDEX" ]; then
+            INDEX=$(find app_src -iname "*.html" | head -n 1)
           fi
+          if [ -z "$INDEX" ]; then
+            echo "ERROR: No HTML file found inside ZIP!"
+            find app_src -maxdepth 4
+            exit 1
+          fi
+          WEB_SRC=$(dirname "$INDEX")
+          echo "Using web files from: $WEB_SRC ($INDEX)"
+          mkdir -p /tmp/www_ready
+          cp -r "$WEB_SRC"/. /tmp/www_ready/
+          if [ ! -f "/tmp/www_ready/index.html" ]; then
+            cp "$INDEX" /tmp/www_ready/index.html
+          fi
+          rm -rf app_src/www
+          mv /tmp/www_ready app_src/www
 
-          if [ ! -f "app_src/package.json" ]; then
-            cat << 'EOF' > app_src/package.json
+          cat << 'EOF' > app_src/package.json
           {
             "name": "lanka-bus-app",
             "version": "1.5.0",
@@ -47,10 +58,8 @@ jobs:
             }
           }
           EOF
-          fi
 
-          if [ ! -f "app_src/capacitor.config.json" ]; then
-            cat << 'EOF' > app_src/capacitor.config.json
+          cat << 'EOF' > app_src/capacitor.config.json
           {
             "appId": "lk.lankabus.app",
             "appName": "Lanka Bus",
@@ -58,7 +67,6 @@ jobs:
             "server": { "androidScheme": "https", "cleartext": false }
           }
           EOF
-          fi
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -85,12 +93,14 @@ jobs:
           sed -i "s/versionName \"1.0\"/versionName \"1.5.${{ github.run_number }}\"/" android/app/build.gradle
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           sed -i 's|<uses-permission android:name="android.permission.INTERNET" />|<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    <uses-permission android:name="android.permission.VIBRATE" />|' "$MANIFEST"
-          for d in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
-            mkdir -p "android/app/src/main/res/$d"
-            cp www/icon-512.png "android/app/src/main/res/$d/ic_launcher.png" || true
-            cp www/icon-512.png "android/app/src/main/res/$d/ic_launcher_round.png" || true
-            cp www/icon-512.png "android/app/src/main/res/$d/ic_launcher_foreground.png" || true
-          done
+          if [ -f "www/icon-512.png" ]; then
+            for d in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+              mkdir -p "android/app/src/main/res/$d"
+              cp www/icon-512.png "android/app/src/main/res/$d/ic_launcher.png" || true
+              cp www/icon-512.png "android/app/src/main/res/$d/ic_launcher_round.png" || true
+              cp www/icon-512.png "android/app/src/main/res/$d/ic_launcher_foreground.png" || true
+            done
+          fi
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease
